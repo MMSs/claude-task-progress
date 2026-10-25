@@ -704,10 +704,11 @@ export const register: Register = on => {
                 {GAP}
                 <Text dimColor>{first}</Text>
               </Button>,
+              // The engine's inverse marks the Button's line alone, so its further lines take it here
               ...more.map((line, i) => (
-                <Text key={`more:${row.key}:${i}`} dimColor>
+                <Text key={`more:${row.key}:${i}`} inverse>
                   {doingIndent}
-                  {line}
+                  <Text dimColor>{line}</Text>
                 </Text>
               )),
             ]

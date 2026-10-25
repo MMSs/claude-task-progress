@@ -691,38 +691,41 @@ export const register: Register = on => {
           {shown.map(row => {
             const isDone = row.state === 'done'
             const isViewed = viewed !== '' && row.agent === viewed && !isDone
-            const [first, ...more] =
-              focused === `row:${row.key}`
-                ? wrap(firstLine(row.activity ?? EMPTY), doingColumn, MAX_DOING_LINES)
-                : [truncate(doing(row), doingColumn)]
+            const isFocused = focused === `row:${row.key}`
+            // Under the focus's inverse a dim cell turns grey and the rest black, so the
+            // focused row is drawn at one strength for one color across it
+            const isDim = (dim: boolean) => dim && !isFocused
+            const [first, ...more] = isFocused
+              ? wrap(firstLine(row.activity ?? EMPTY), doingColumn, MAX_DOING_LINES)
+              : [truncate(doing(row), doingColumn)]
 
             return [
               <Button key={`row:${row.key}`} plain onPress={() => open(row.agent)}>
                 {row.isAgentLine ? (
-                  <Text dimColor>
+                  <Text dimColor={isDim(true)}>
                     {'  '}
                     {cell(`${'  '.repeat(row.depth)}└`, taskColumn)}
                   </Text>
                 ) : (
                   <Text>
                     <Text color={COLORS[row.state]}>{ICONS[row.state]}</Text>{' '}
-                    <Text bold={row.state === 'active'} dimColor={isDone}>
+                    <Text bold={row.state === 'active'} dimColor={isDim(isDone)}>
                       {cell('  '.repeat(row.depth) + row.label, taskColumn)}
                     </Text>
                   </Text>
                 )}
                 {GAP}
-                <Text dimColor={!row.agentLabel} underline={isViewed}>
+                <Text dimColor={isDim(!row.agentLabel)} underline={isViewed}>
                   {cell(row.agentLabel ?? EMPTY, agentColumn)}
                 </Text>
                 {GAP}
-                <Text dimColor>{first}</Text>
+                <Text dimColor={isDim(true)}>{first}</Text>
               </Button>,
               // The engine's inverse marks the Button's line alone, so its further lines take it here
               ...more.map((line, i) => (
                 <Text key={`more:${row.key}:${i}`} inverse>
                   {doingIndent}
-                  <Text dimColor>{line}</Text>
+                  {line}
                 </Text>
               )),
             ]

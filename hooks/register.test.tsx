@@ -260,9 +260,7 @@ test('the focused row wraps its DOING onto lines under it; the others stay one l
 
   await $.tool.call({ tool: 'Bash', command, agentId: 'a1' })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  // A further line's DOING is its own Text inside the one holding the indent
-  const doingLines = async () =>
-    (await ui.findAll({ type: 'Text', text: /^\S.*(step-|Bash: )/ })).map(t => t.text.trim())
+  const doingLines = async () => (await ui.findAll({ type: 'Text', text: /step-|Bash: / })).map(t => t.text.trim())
 
   // Unfocused: one line, cut, its cd shortened
   expect(await doingLines()).toEqual([expect.stringMatching(/^Bash: cd \.\/app && step-0 .*…$/)])

@@ -1,0 +1,15 @@
+{
+  "name": "claude-task-progress",
+  "description": "Task progress: a live task sheet above the Claude Code prompt",
+  "owner": {
+    "name": "Mohab"
+  },
+  "plugins": [
+    {
+      "name": "task-progress",
+      "description": "Five-line progress sheet above the prompt: plan tasks, todos and subagents with what each is doing now; Enter on a row opens its agent.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

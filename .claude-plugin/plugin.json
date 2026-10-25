@@ -1,0 +1,14 @@
+{
+  "name": "task-progress",
+  "displayName": "Task progress",
+  "description": "Five-line progress sheet above the prompt: every task and subagent with what it is doing now; Enter on a row opens its agent",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mohab"
+  },
+  "homepage": "https://github.com/MMSs/claude-task-progress",
+  "repository": "https://github.com/MMSs/claude-task-progress",
+  "license": "MIT",
+  "keywords": ["tasks", "progress", "subagents", "plan"],
+  "types": "./types/index.d.ts"
+}

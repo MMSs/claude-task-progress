@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const BAND = {
   plugin: 'task-progress',
@@ -323,4 +323,43 @@ test('a task several agents are at shows a line for each, Enter on it opening th
   await ui.press({ key: 'row:with:a2' })
   expect(views).toEqual(['a2'])
   await ui.unmount()
+})
+
+test('a plan keeps its finished tasks done once the ledger is deleted at the finish', async ($, on) => {
+  const files: Record<string, string> = {
+    '/repo/.superpowers/plans/2026-01-01-export.md': PLAN,
+    '/repo/.superpowers/sdd/2026-01-01-export/progress.md': `${LEDGER}Task 2: complete\nTask 3: complete\n`,
+  }
+  const clock = mock.clock(on)
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('env.get', () => ({ value: '/home' }))
+  on('fs.read', (_, e) => {
+    const text = files[e.path]
+    if (text === undefined) throw new Error(`ENOENT ${e.path}`)
+    return { value: text }
+  })
+  on('tool.call', (_, e) => ({ result: e.tool === 'TaskCreate' ? { task: { id: '1' } } : {} }))
+  on('agent.list', () => ({ value: [] }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'sed -n 1,80p .superpowers/plans/2026-01-01-export.md' })
+  await $.tool.call({ tool: 'TaskCreate', subject: 'Final whole-branch review', description: 'Review it' })
+  await $.tool.call({ tool: 'TaskUpdate', taskId: '1', status: 'in_progress' })
+  const count = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ type: 'Text', text: /tasks/ }))?.text
+    await ui.unmount()
+    return text
+  }
+  expect(await count()).toContain('3/4 tasks')
+
+  // superpowers' Finish: `rm -rf` the plan's workspace, the ledger with it
+  delete files['/repo/.superpowers/sdd/2026-01-01-export/progress.md']
+  await clock.advance(10_000)
+  expect(await count()).toContain('3/4 tasks')
 })

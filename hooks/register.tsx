@@ -352,6 +352,9 @@ async function refreshPlan($: EngineInterface) {
   if (!current) return
   const found = await loadPlan($, current.path)
   if (!found || JSON.stringify(found) === JSON.stringify(current)) return
+  // superpowers deletes a plan's workspace, its ledger with it, at the finish: what the
+  // ledger said stands
+  if (current.ledger !== undefined && found.ledger === undefined) return
   await update($, plan, () => found)
 }
 

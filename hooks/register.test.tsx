@@ -482,3 +482,76 @@ test('a MODEL column after AGENT names each agent\'s model and effort, shortened
   expect(header).toMatch(/MODEL {6}DOING/)
   await ui.unmount()
 })
+
+test('a finished plan is dismantled at the next prompt, its agents with it, while work still running stays', async ($, on) => {
+  const files: Record<string, string> = {
+    '/repo/.superpowers/plans/2026-01-01-export.md': PLAN,
+    '/repo/.superpowers/sdd/2026-01-01-export/progress.md': `${LEDGER}Task 2: complete\nTask 3: complete\n`,
+  }
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('env.get', () => ({ value: '/home' }))
+  on('fs.read', (_, e) => {
+    const text = files[e.path]
+    if (text === undefined) throw new Error(`ENOENT ${e.path}`)
+    return { value: text }
+  })
+  on('tool.call', () => ({ result: {} }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('agent.list', () => ({
+    value: [
+      { id: 'a1', description: 'Implement Task 1: fixtures', type: 'general-purpose', status: 'completed' as const },
+      { id: 'a2', description: 'Final whole-branch review', type: 'general-purpose', status: 'completed' as const },
+      { id: 'a3', description: 'Research requests', type: 'Explore', status: 'running' as const },
+    ],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  await $.tool.call({ tool: 'Bash', command: 'sed -n 1,80p .superpowers/plans/2026-01-01-export.md' })
+  for (const agentId of ['a1', 'a2', 'a3']) await $.tool.call({ tool: 'Read', file_path: '/repo/x.ts', agentId })
+  const keys = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: false } })
+    const found = (await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('row:')).map(b => b.key)
+    await ui.unmount()
+    return found
+  }
+  expect(await keys()).toEqual(['row:plan:1', 'row:plan:2', 'row:plan:3', 'row:agent:a2', 'row:agent:a3'])
+
+  await $.prompt.submit({ text: 'what next?' })
+  expect(await keys()).toEqual(['row:agent:a3'])
+})
+
+test('a new plan does not take on the agents of the one before it', async ($, on) => {
+  const files: Record<string, string> = {
+    '/repo/.superpowers/plans/2026-01-01-export.md': PLAN,
+    '/repo/.superpowers/sdd/2026-01-01-export/progress.md': LEDGER,
+    '/repo/.superpowers/plans/2026-01-02-import.md': '### Task 1: Import fixtures\n\n- [ ] **Step 1:** Write them\n\n### Task 2: Import command\n\n- [ ] **Step 1:** Write it\n',
+    '/repo/.superpowers/sdd/2026-01-02-import/progress.md': 'Task 1: complete\n',
+  }
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('env.get', () => ({ value: '/home' }))
+  on('fs.read', (_, e) => {
+    const text = files[e.path]
+    if (text === undefined) throw new Error(`ENOENT ${e.path}`)
+    return { value: text }
+  })
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Implement Task 1: fixtures', type: 'general-purpose', status: 'completed' as const }],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  await $.tool.call({ tool: 'Bash', command: 'sed -n 1,80p .superpowers/plans/2026-01-01-export.md' })
+  await $.tool.call({ tool: 'Read', file_path: '/repo/x.ts', agentId: 'a1' })
+  await $.tool.call({ tool: 'Bash', command: 'sed -n 1,80p .superpowers/plans/2026-01-02-import.md' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const row = await ui.find({ type: 'Button', key: 'row:plan:1' })
+  expect(row?.text).toContain('Import fixtures')
+  expect(row?.text).not.toContain('Implement fixtures')
+  await ui.unmount()
+})

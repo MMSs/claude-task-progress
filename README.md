@@ -37,7 +37,10 @@ a command too wide for its column has a `cd` into the session's folder
 shortened to `cd ./<folder>` first. The row the focus is on (`tab` /
 `shift+tab`) shows its DOING whole and as written, wrapped onto lines under it.
 The sheet steps aside while the `/` command menu is open, and goes away once
-every task is done and every agent has finished. The `x/y tasks` count is
+every task is done and every agent has finished. Short of that, the next
+prompt clears what is finished: a plan whose every task is done, with the
+agents that worked on it, and each finished agent tied to no task, so the
+next plan starts on a clean sheet. The `x/y tasks` count is
 shown only when there are tasks.
 
 ## Keys

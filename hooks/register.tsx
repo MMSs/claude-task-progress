@@ -338,13 +338,60 @@ function isAllFinished(rows: Row[]): boolean {
   return rows.every(row => row.state === 'done' || row.state === 'failed')
 }
 
+// Agents gone with their own tasks, what they did and their models, and the
+// agents they spawned
+async function dropAgents($: EngineInterface, ids: Set<string>, live: ReadonlySet<string> = new Set()) {
+  const all = await read($, agents)
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const [id, node] of Object.entries(all)) {
+      if (ids.has(id) || !ids.has(node.parent) || live.has(id)) continue
+      ids.add(id)
+      grew = true
+    }
+  }
+  if (ids.size === 0) return
+  const keep = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([id]) => !ids.has(id)))
+  await update($, agents, keep)
+  await update($, activity, keep)
+  await update($, models, keep)
+  await update($, tasks, all => Object.fromEntries(Object.entries(all).filter(([, task]) => !ids.has(task.agent))))
+}
+
+// At a new prompt, what is finished goes: all of it, else a plan whose every task
+// is done, with the agents that worked on it, and each finished agent of its own
 async function forgetFinished($: EngineInterface) {
   const rows = await readRows($, false)
-  if (rows.length === 0 || !isAllFinished(rows)) return
-  await update($, tasks, () => ({}))
-  await update($, agents, () => ({}))
-  await update($, activity, () => ({}))
-  await update($, plan, () => null)
+  if (rows.length === 0) return
+  if (isAllFinished(rows)) {
+    await update($, tasks, () => ({}))
+    await update($, agents, () => ({}))
+    await update($, activity, () => ({}))
+    await update($, plan, () => null)
+    return
+  }
+
+  // A row and the rows under it, a group drawn as one
+  const groups: Row[][] = []
+  for (const row of rows) {
+    if (row.depth === 0 && !row.isAgentLine) groups.push([row])
+    else groups.at(-1)?.push(row)
+  }
+  const live = new Set(rows.filter(row => row.state === 'active' || row.state === 'pending').map(row => row.agent))
+  const planGroups = groups.filter(group => group[0]?.key.startsWith('plan:'))
+  const isPlanDone = planGroups.length > 0 && planGroups.every(isAllFinished)
+  const ids = new Set(
+    groups
+      .filter(group => group[0]?.key.startsWith('agent:') && isAllFinished(group))
+      .map(group => group[0]?.agent ?? ''),
+  )
+  if (isPlanDone) {
+    for (const [id, node] of Object.entries(await read($, agents))) {
+      if (node.parentTask?.startsWith('plan:') && !live.has(id)) ids.add(id)
+    }
+    await update($, plan, () => null)
+  }
+  await dropAgents($, ids, live)
 }
 
 async function readText($: EngineInterface, path: string): Promise<string | undefined> {
@@ -378,6 +425,9 @@ async function notePlanMentions($: EngineInterface, texts: string[]) {
     if (!found || found.tasks.length === 0) continue
     const isCurrentLive = current?.ledger !== undefined && current.tasks.some(t => !t.isLedgerDone)
     if (isCurrentLive && found.ledger === undefined) return
+    // The agents of the plan before it worked on its tasks, not on this one's
+    const planAgents = Object.entries(await read($, agents)).filter(([, a]) => a.parentTask?.startsWith('plan:'))
+    if (current) await dropAgents($, new Set(planAgents.map(([id]) => id)))
     await update($, plan, () => found)
     await update($, windowStart, () => null)
     return

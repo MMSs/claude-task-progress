@@ -249,9 +249,14 @@ async function readRows($: EngineInterface, isMainWorking: boolean, statuses = n
   )
 }
 
+// Every task done and every agent finished, so nothing is left to watch
+function isAllFinished(rows: Row[]): boolean {
+  return rows.every(row => row.state === 'done' || row.state === 'failed')
+}
+
 async function forgetFinished($: EngineInterface) {
   const rows = await readRows($, false)
-  if (rows.length === 0 || rows.some(row => row.state === 'active' || row.state === 'pending')) return
+  if (rows.length === 0 || !isAllFinished(rows)) return
   await update($, tasks, () => ({}))
   await update($, agents, () => ({}))
   await update($, activity, () => ({}))
@@ -491,15 +496,28 @@ export const register: Register = on => {
 
     const statuses = new Map((await $.agent.list()).map(a => [a.id, a.status] as const))
     const rows = await readRows($, e.props.isWorking, statuses)
-    if (rows.length === 0) return below
+    // Gone once the work is done; the next prompt clears what is left
+    if (isAllFinished(rows)) return below
 
     const { Box, Button, Text } = $.ui.resolve(e)
 
+    // The "done/total tasks" count, left out while only agents tied to no task are listed
+    const tasksOnly = rows.filter(row => !row.key.startsWith('agent:') && !row.key.includes(':step:'))
+    const done = tasksOnly.filter(row => row.state === 'done').length
+    const count = tasksOnly.length > 0 ? ` · ${done}/${tasksOnly.length} tasks` : ''
+    const countView = count ? (
+      <Text>
+        <Text dimColor>{' · '}</Text>
+        <Text color="success">{done}</Text>
+        <Text dimColor>/{tasksOnly.length} tasks</Text>
+      </Text>
+    ) : (
+      ''
+    )
+
     if (await read($, isCollapsed)) {
-      const tasksOnly = rows.filter(row => !row.key.startsWith('agent:'))
-      const done = tasksOnly.filter(row => row.state === 'done').length
       const active = rows.find(row => row.state === 'active')
-      const head = `▸ ${NAME} · ${done}/${tasksOnly.length} tasks`
+      const head = `▸ ${NAME}${count}`
       const tail = '  enter to show'
       const now = active ? truncate(`${ICONS.active} ${active.label}`, e.props.bodyColumns - head.length - tail.length - 3) : ''
 
@@ -511,9 +529,7 @@ export const register: Register = on => {
             <Button key="show" plain onPress={() => update($, isCollapsed, () => false)}>
               <Text color="claude">▸ </Text>
               <Text bold>{NAME}</Text>
-              <Text dimColor>{' · '}</Text>
-              <Text color="success">{done}/{tasksOnly.length}</Text>
-              <Text dimColor> tasks</Text>
+              {countView}
               {now ? <Text dimColor>{' · '}</Text> : ''}
               {now ? <Text color="claude">{now.slice(0, 1)}</Text> : ''}
               {now ? now.slice(1) : ''}
@@ -555,10 +571,8 @@ export const register: Register = on => {
     const doingColumn = room - taskColumn - agentColumn
     const cell = (text: string, width: number) => truncate(text, width).padEnd(width)
 
-    const tasksOnly = rows.filter(row => !row.key.startsWith('agent:') && !row.key.includes(':step:'))
-    const done = tasksOnly.filter(row => row.state === 'done').length
     const scrolled = `${hiddenAbove > 0 ? ` ↑${hiddenAbove}` : ''}${hiddenBelow > 0 ? ` ↓${hiddenBelow}` : ''}`
-    const summary = `${NAME} · ${done}/${tasksOnly.length} tasks${scrolled}`
+    const summary = `${NAME}${count}${scrolled}`
     let hintRoom = inner - summary.length - 2 - HIDE_WIDTH
     const hint = HINT.filter(([keys, what]) => {
       const cost = keys.length + what.length + 4
@@ -608,11 +622,8 @@ export const register: Register = on => {
               <Text color="claude" bold>
                 {NAME}
               </Text>
-              <Text dimColor> · </Text>
-              <Text color="success">{done}</Text>
-              <Text dimColor>
-                /{tasksOnly.length} tasks{scrolled}
-              </Text>
+              {countView}
+              <Text dimColor>{scrolled}</Text>
             </Text>
             <Box flexDirection="row">
               <Text>

@@ -137,6 +137,55 @@ test('a superpowers plan and its ledger, with the agents named after its tasks',
   await ui.unmount()
 })
 
+test('a subagent tied to no task gets a row, and no task count is shown', async ($, on) => {
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Research requests', type: 'general-purpose', status: 'running' as const }],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  await $.tool.call({ tool: 'Read', file_path: '/repo/src/api.ts', agentId: 'a1' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const buttons = (await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('row:'))
+  expect(buttons.map(b => b.key)).toEqual(['row:agent:a1'])
+  expect(await ui.find({ type: 'Text', text: /tasks/ })).toBeUndefined()
+
+  await ui.press({ key: 'hide' })
+  const line = await ui.find({ type: 'Button', key: 'show' })
+  expect(line?.text).toContain('Task progress · ● Research requests')
+  expect(line?.text).not.toContain('tasks')
+  await ui.unmount()
+})
+
+test('it is gone once every task is done and every agent has finished', async ($, on) => {
+  let status: 'running' | 'completed' = 'running'
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Research requests', type: 'general-purpose', status }],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  await $.tool.call({ tool: 'TodoWrite', todos: TODOS.map(t => ({ ...t, status: 'completed' as const })) })
+  await $.tool.call({ tool: 'Read', file_path: '/repo/src/api.ts', agentId: 'a1' })
+  const rowCount = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: false } })
+    const count = (await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('row:')).length
+    await ui.unmount()
+    return count
+  }
+
+  // The agent still at work keeps it up
+  expect(await rowCount()).toBeGreaterThan(0)
+  status = 'completed'
+  expect(await rowCount()).toBe(0)
+})
+
 test('its own hide folds it to one named line, and Enter there unfolds it', async ($, on) => {
   on('tool.call', () => ({ result: {} }))
   on('agent.list', () => ({ value: [] }))

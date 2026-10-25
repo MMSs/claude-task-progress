@@ -30,7 +30,9 @@ which agent is on it, and what that agent is doing right now.
 Each row shows a status (✓ done, ● in progress, ○ pending, ✗ failed), the
 task, the agent working on it, and that agent's latest tool call
 ("Edit export.ts", "Bash: run tests"). Rows are cut to fit, never wrapped.
-The sheet steps aside while the `/` command menu is open.
+The sheet steps aside while the `/` command menu is open, and goes away once
+every task is done and every agent has finished. The `x/y tasks` count is
+shown only when there are tasks.
 
 ## Keys
 

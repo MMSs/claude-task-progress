@@ -10,7 +10,7 @@ which agent is on it, and what that agent is doing right now.
 │ ✓ Fixtures                      —                     —                      │
 │ ● Add the export command        Implement             Edit export.ts         │
 │ ○ Docs page                     —                     —                      │
-│ Task progress · 1/3 tasks          ctrl+x tab select · enter open agent · h: hide │
+│ Task progress · 1/3 tasks     ctrl+x tab select · enter open agent · h: hide │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 

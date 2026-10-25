@@ -285,7 +285,10 @@ function wrap(text: string, width: number, max: number): string[] {
   return lines
 }
 
-async function readRows($: EngineInterface, isMainWorking: boolean, statuses = new Map<string, AgentStatus>()) {
+// The rows as drawn: every reader takes the agents' statuses from the engine, since a
+// SubagentStop can go unheard and leave a finished agent looking busy
+async function readRows($: EngineInterface, isMainWorking: boolean) {
+  const statuses = new Map((await $.agent.list()).map(a => [a.id, a.status] as const))
   return buildRows(
     await read($, tasks),
     await read($, plan),
@@ -294,6 +297,21 @@ async function readRows($: EngineInterface, isMainWorking: boolean, statuses = n
     statuses,
     isMainWorking,
   )
+}
+
+// Where the window slides when the ring goes to `element`: one row beyond it stays
+// drawn on either side. `landOn` is the Button now drawn where the row will be.
+async function slideFor($: EngineInterface, element: string) {
+  const rows = await readRows($, false)
+  const index = rows.findIndex(row => `row:${row.key}` === element)
+  if (index === -1 || rows.length <= MAX_ROWS) return undefined
+  const current = clampStart((await read($, windowStart)) ?? autoStart(rows), rows.length)
+  let start = current
+  if (index <= start) start = index - 1
+  else if (index >= start + MAX_ROWS - 1) start = index - MAX_ROWS + 2
+  start = clampStart(start, rows.length)
+  const landOn = rows[current + index - start]
+  return start === current || !landOn ? undefined : { start, landOn: `row:${landOn.key}` }
 }
 
 // Every task done and every agent finished, so nothing is left to watch
@@ -530,21 +548,15 @@ export const register: Register = on => {
   // Walking the list: the row the ring lands on wraps its DOING, and past the fifth
   // row the window slides so the next row is drawn before the ring reaches for it
   on('ui.focus', async ($, e, next) => {
-    const result = await next(e)
-    if (e.component !== 'AbovePrompt' || result.deny !== undefined) return result
+    if (e.component !== 'AbovePrompt') return next(e)
     const isRow = e.plugin === 'task-progress' && e.element?.startsWith('row:')
+    const slide = isRow ? await slideFor($, e.element ?? '') : undefined
+    // The engine's ring holds a place in the band's Buttons, not a Button, so after
+    // a slide that place shows another row: it lands where the row will be drawn
+    const result = await next(slide ? { ...e, element: slide.landOn } : e)
+    if (result.deny !== undefined) return result
     await update($, focusedRow, () => (isRow ? (e.element ?? null) : null))
-    if (!isRow) return result
-    const rows = await readRows($, false)
-    const index = rows.findIndex(row => `row:${row.key}` === e.element)
-    if (index === -1 || rows.length <= MAX_ROWS) return result
-
-    const current = (await read($, windowStart)) ?? autoStart(rows)
-    let start = current
-    if (index <= start) start = index - 1
-    else if (index >= start + MAX_ROWS - 1) start = index - MAX_ROWS + 2
-    start = clampStart(start, rows.length)
-    if (start !== current) await update($, windowStart, () => start)
+    if (slide) await update($, windowStart, () => slide.start)
     return result
   }).catch(($, e, next) => next(e))
 
@@ -552,8 +564,7 @@ export const register: Register = on => {
     const below = await next(e)
     if (e.props.hasSurvey || (await read($, isSlashMenu))) return below
 
-    const statuses = new Map((await $.agent.list()).map(a => [a.id, a.status] as const))
-    const rows = await readRows($, e.props.isWorking, statuses)
+    const rows = await readRows($, e.props.isWorking)
     // Gone once the work is done; the next prompt clears what is left
     if (isAllFinished(rows)) return below
 

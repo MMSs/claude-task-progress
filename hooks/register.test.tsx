@@ -363,3 +363,48 @@ test('a plan keeps its finished tasks done once the ledger is deleted at the fin
   await clock.advance(10_000)
   expect(await count()).toContain('3/4 tasks')
 })
+
+test('walking the rows draws the next one, whatever an agent left stale', async ($, on) => {
+  on('tool.call', () => ({ result: {} }))
+  // a2 finished with no SubagentStop heard, as a background agent can
+  on('agent.list', () => ({
+    value: [
+      { id: 'a1', description: 'Build lexer', type: 'implementer', status: 'running' as const },
+      { id: 'a2', description: 'Review lexer', type: 'reviewer', status: 'completed' as const },
+    ],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  on('ui.focus', () => ({}))
+
+  await $.tool.call({ tool: 'TodoWrite', todos: TODOS })
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/lexer.ts', old_string: 'a', new_string: 'b', agentId: 'a1' })
+  await $.tool.call({ tool: 'Read', file_path: '/repo/src/lexer.test.ts', agentId: 'a2' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const shown = async () => (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('row:'))
+  const focus = async (n: number) => {
+    await $.ui.focus({
+      component: 'AbovePrompt',
+      requestId: BAND.requestId,
+      plugin: 'task-progress',
+      element: `row:todo::${n}`,
+      origin: { kind: 'person' },
+    })
+    await ui.redraw()
+  }
+  expect(await shown()).toEqual(['row:todo::0', 'row:todo::1', 'row:todo::2', 'row:todo::3', 'row:todo::4'])
+
+  // Down to the last row and back up: the row the ring goes to next is always drawn
+  for (const n of [4, 5, 6]) {
+    await focus(n)
+    expect(await shown()).toContain(`row:todo::${Math.min(n + 1, 6)}`)
+  }
+  for (const n of [5, 4, 3, 2, 1]) {
+    await focus(n)
+    expect(await shown()).toContain(`row:todo::${n - 1}`)
+  }
+  await ui.unmount()
+})

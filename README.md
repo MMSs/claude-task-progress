@@ -29,7 +29,9 @@ which agent is on it, and what that agent is doing right now.
 
 Each row shows a status (✓ done, ● in progress, ○ pending, ✗ failed), the
 task, the agent working on it, and that agent's latest tool call
-("Edit export.ts", "Bash: run tests"). Rows are cut to fit;
+("Edit export.ts", "Bash: run tests"). A task several agents are at shows
+each further one on a `└` line under it, with its own AGENT and DOING.
+Rows are cut to fit;
 a command too wide for its column has a `cd` into the session's folder
 shortened to `cd ./<folder>` first. The row the focus is on (`tab` /
 `shift+tab`) shows its DOING whole and as written, wrapped onto lines under it.

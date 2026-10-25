@@ -50,6 +50,8 @@ type Row = {
   // Who is at it now; absent while nobody is
   agentLabel?: string
   activity?: string
+  // A second (third, ...) agent at the task of the row above, not a task itself
+  isAgentLine?: true
 }
 
 const ICONS: Record<RowState, string> = { done: '✓', active: '●', pending: '○', failed: '✗' }
@@ -198,19 +200,31 @@ function buildRows(
     for (const [key, task] of bySeq(taskEntries.filter(([, t]) => t.agent === loop))) {
       const state: RowState = task.status === 'completed' ? 'done' : task.status === 'in_progress' ? 'active' : 'pending'
       const children = bySeq(agentEntries.filter(([, a]) => a.parentTask === key))
-      const running = children.filter(([id]) => isRunning(id))
-      // The newest agent still at the task, else the loop that owns it while that runs
-      const worker = running[running.length - 1]?.[0] ?? (state === 'active' && isRunning(loop) ? loop : undefined)
-      const more = running.length > 1 ? ` +${running.length - 1}` : ''
+      const [first, ...others] = children.filter(([id]) => isRunning(id))
+      // The first agent still at the task, else the loop that owns it while that runs
+      const worker = first?.[0] ?? (state === 'active' && isRunning(loop) ? loop : undefined)
       rows.push({
         key,
         depth,
         state,
         label: task.label,
         agent: worker ?? loop,
-        agentLabel: worker === undefined ? undefined : worker === '' ? 'main' : `${agentName(worker)}${more}`,
+        agentLabel: worker === undefined ? undefined : worker === '' ? 'main' : agentName(worker),
         activity: state === 'active' ? (worker !== undefined && allActivity[worker]) || task.activeForm : undefined,
       })
+      // Every other agent at it gets a line of its own under the task
+      for (const [id] of others) {
+        rows.push({
+          key: `with:${id}`,
+          depth,
+          state: 'active',
+          label: '',
+          agent: id,
+          agentLabel: agentName(id),
+          activity: allActivity[id],
+          isAgentLine: true,
+        })
+      }
       for (const [id] of children) {
         seen.add(id)
         if (hasTasks(id)) emitLoop(id, depth + 1)
@@ -543,7 +557,9 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
 
     // The "done/total tasks" count, left out while only agents tied to no task are listed
-    const tasksOnly = rows.filter(row => !row.key.startsWith('agent:') && !row.key.includes(':step:'))
+    const tasksOnly = rows.filter(
+      row => !row.key.startsWith('agent:') && !row.key.includes(':step:') && !row.isAgentLine,
+    )
     const done = tasksOnly.filter(row => row.state === 'done').length
     const count = tasksOnly.length > 0 ? ` · ${done}/${tasksOnly.length} tasks` : ''
     const countView = count ? (
@@ -668,10 +684,19 @@ export const register: Register = on => {
 
             return [
               <Button key={`row:${row.key}`} plain onPress={() => open(row.agent)}>
-                <Text color={COLORS[row.state]}>{ICONS[row.state]}</Text>{' '}
-                <Text bold={row.state === 'active'} dimColor={isDone}>
-                  {cell('  '.repeat(row.depth) + row.label, taskColumn)}
-                </Text>
+                {row.isAgentLine ? (
+                  <Text dimColor>
+                    {'  '}
+                    {cell(`${'  '.repeat(row.depth)}└`, taskColumn)}
+                  </Text>
+                ) : (
+                  <Text>
+                    <Text color={COLORS[row.state]}>{ICONS[row.state]}</Text>{' '}
+                    <Text bold={row.state === 'active'} dimColor={isDone}>
+                      {cell('  '.repeat(row.depth) + row.label, taskColumn)}
+                    </Text>
+                  </Text>
+                )}
                 {GAP}
                 <Text dimColor={!row.agentLabel} underline={isViewed}>
                   {cell(row.agentLabel ?? EMPTY, agentColumn)}

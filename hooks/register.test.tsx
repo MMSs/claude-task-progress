@@ -283,3 +283,42 @@ test('the focused row wraps its DOING onto lines under it; the others stay one l
   expect((await doingLines()).length).toBe(1)
   await ui.unmount()
 })
+
+test('a task several agents are at shows a line for each, Enter on it opening that agent', async ($, on) => {
+  const views: (string | undefined)[] = []
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [
+      { id: 'a1', description: 'Build lexer', type: 'implementer', status: 'running' as const },
+      { id: 'a2', description: 'Review lexer', type: 'reviewer', status: 'running' as const },
+    ],
+  }))
+  on('ui.view', (_, e) => {
+    views.push(e.agentId)
+    return { value: {} }
+  })
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  await $.tool.call({ tool: 'TodoWrite', todos: TODOS.slice(0, 3) })
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/lexer.ts', old_string: 'a', new_string: 'b', agentId: 'a1' })
+  await $.tool.call({ tool: 'Read', file_path: '/repo/src/lexer.test.ts', agentId: 'a2' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const buttons = (await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('row:'))
+  expect(buttons.map(b => b.key)).toEqual(['row:todo::0', 'row:todo::1', 'row:with:a2', 'row:todo::2'])
+  expect(buttons[1]?.text).toContain('Build lexer')
+  expect(buttons[1]?.text).toContain('Edit lexer.ts')
+  expect(buttons[1]?.text).not.toContain('+1')
+  expect(buttons[2]?.text).toContain('└')
+  expect(buttons[2]?.text).toContain('Review lexer')
+  expect(buttons[2]?.text).toContain('Read lexer.test.ts')
+  // Agent lines are not tasks
+  expect((await ui.find({ type: 'Text', text: /tasks/ }))?.text).toContain('1/3 tasks')
+
+  await ui.press({ key: 'row:with:a2' })
+  expect(views).toEqual(['a2'])
+  await ui.unmount()
+})

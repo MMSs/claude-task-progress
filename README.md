@@ -53,12 +53,16 @@ shown only when there are tasks.
 | `esc` | Back to the prompt |
 | `h` | Fold the sheet to one line; `enter` on that line unfolds it |
 
-To focus it with a single key, bind `abovePrompt:focus` in
-`~/.claude/keybindings.json`, for example:
+To focus it with another key, bind `abovePrompt:focus` in
+`~/.claude/keybindings.json`; the sheet's hint shows the key you bound. For
+example, `ctrl+up` in place of `ctrl+x tab`:
 
 ```json
-{ "bindings": [{ "context": "Chat", "bindings": { "meta+j": "abovePrompt:focus" } }] }
+{ "bindings": [{ "context": "Chat", "bindings": { "ctrl+x tab": null, "ctrl+up": "abovePrompt:focus" } }] }
 ```
+
+On macOS, `ctrl+up` opens Mission Control unless that shortcut is turned off in
+System Settings → Keyboard → Keyboard Shortcuts → Mission Control.
 
 ## Requirements
 

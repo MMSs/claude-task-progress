@@ -555,3 +555,37 @@ test('a new plan does not take on the agents of the one before it', async ($, on
   expect(row?.text).not.toContain('Implement fixtures')
   await ui.unmount()
 })
+
+test('the hint names the chord the person bound to focus the band', async ($, on) => {
+  const files: Record<string, string> = {}
+  const clock = mock.clock(on)
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home' : undefined }))
+  on('fs.read', (_, e) => {
+    const text = files[e.path]
+    if (text === undefined) throw new Error(`ENOENT ${e.path}`)
+    return { value: text }
+  })
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({ value: [] }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'TodoWrite', todos: TODOS })
+  const hint = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ type: 'Text', text: / select/ }))?.text
+    await ui.unmount()
+    return text
+  }
+  expect(await hint()).toContain('ctrl+x tab select')
+
+  files['/home/.claude/keybindings.json'] = JSON.stringify({
+    bindings: [{ context: 'Chat', bindings: { 'ctrl+x tab': null, 'ctrl+up': 'abovePrompt:focus' } }],
+  })
+  await clock.advance(10_000)
+  expect(await hint()).toContain('ctrl+up select')
+  expect(await hint()).not.toContain('ctrl+x tab')
+})

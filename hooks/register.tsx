@@ -14,6 +14,7 @@ const isCollapsed = atom({ plugin: 'task-progress', key: 'isCollapsed' } as cons
 const windowStart = atom({ plugin: 'task-progress', key: 'windowStart' } as const, null)
 const focusedRow = atom({ plugin: 'task-progress', key: 'focusedRow' } as const, null)
 const seq = atom({ plugin: 'task-progress', key: 'seq' } as const, 0)
+const focusKeys = atom({ plugin: 'task-progress', key: 'focusKeys' } as const, 'ctrl+x tab')
 
 const MAX_ROWS = 5
 // Lines the focused row's DOING may wrap onto
@@ -22,11 +23,13 @@ const PLAN_POLL_MS = 3000
 const FINISHED: ReadonlySet<AgentStatus> = new Set(['completed', 'failed', 'killed'])
 const TASK_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'])
 const NAME = 'Task progress'
-// The engine's default chord for abovePrompt:focus, then the band's own keys;
-// dropped from the end where the row has no room. Hiding is the mod's own `h`:
-// the engine's ctrl+x ctrl+a folds the band to a line it names "plugin panel".
+// The engine's default chord for abovePrompt:focus, which keybindings.json can move
+const FOCUS_KEYS = 'ctrl+x tab'
+const FOCUS_CONTEXTS = new Set(['Chat', 'Global'])
+// The band's own keys after the focus chord; dropped from the end where the row has
+// no room. Hiding is the mod's own `h`: the engine's ctrl+x ctrl+a folds the band to
+// a line it names "plugin panel".
 const HINT: ReadonlyArray<[string, string]> = [
-  ['ctrl+x tab', 'select'],
   ['tab/shift+tab', 'move'],
   ['enter', 'open agent'],
   ['esc', 'back'],
@@ -445,6 +448,30 @@ async function refreshPlan($: EngineInterface) {
   await update($, plan, () => found)
 }
 
+// The chord that focuses the band as the person bound it: their last binding of
+// abovePrompt:focus, else the default unless they unbound it
+async function refreshFocusKeys($: EngineInterface) {
+  const dir = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
+  let found: string | null = FOCUS_KEYS
+  try {
+    const file = JSON.parse((await readText($, `${dir}/keybindings.json`)) ?? '{}') as {
+      bindings?: { context?: string; bindings?: Record<string, string | null> }[]
+    }
+    let bound: string | undefined
+    for (const block of file.bindings ?? []) {
+      if (!FOCUS_CONTEXTS.has(block.context ?? '')) continue
+      for (const [keys, action] of Object.entries(block.bindings ?? {})) {
+        if (action === 'abovePrompt:focus') bound = keys
+        else if (keys === FOCUS_KEYS) found = null
+      }
+    }
+    found = bound ?? found
+  } catch {
+    // A file that does not parse binds nothing, so the default stands
+  }
+  if ((await read($, focusKeys)) !== found) await update($, focusKeys, () => found)
+}
+
 // A subagent seen before its spawn was (one started before this mod loaded)
 async function ensureAgent($: EngineInterface, id: string) {
   if ((await read($, agents))[id]) return
@@ -501,9 +528,10 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     // Steps get ticked and ledger lines appended by tools this mod never sees run
-    // (a shell redirect, an editor), so the plan is read again on a timer
-    $.clock.every(PLAN_POLL_MS, () => void refreshPlan($))
-    await refreshPlan($)
+    // (a shell redirect, an editor), and keybindings.json is edited under a running
+    // session, so both are read again on a timer
+    $.clock.every(PLAN_POLL_MS, () => void Promise.all([refreshPlan($), refreshFocusKeys($)]))
+    await Promise.all([refreshPlan($), refreshFocusKeys($)])
     return result
   })
 
@@ -744,7 +772,9 @@ export const register: Register = on => {
     const scrolled = `${hiddenAbove > 0 ? ` ↑${hiddenAbove}` : ''}${hiddenBelow > 0 ? ` ↓${hiddenBelow}` : ''}`
     const summary = `${NAME}${count}${scrolled}`
     let hintRoom = inner - summary.length - 2 - HIDE_WIDTH
-    const hint = HINT.filter(([keys, what]) => {
+    const focusChord = await read($, focusKeys)
+    const keyHints: [string, string][] = focusChord ? [[focusChord, 'select'], ...HINT] : [...HINT]
+    const hint = keyHints.filter(([keys, what]) => {
       const cost = keys.length + what.length + 4
       if (cost > hintRoom) return false
       hintRoom -= cost

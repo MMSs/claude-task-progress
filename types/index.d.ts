@@ -59,6 +59,8 @@ declare module 'claude-code' {
       // The row the person has walked the band's focus ring onto, its DOING drawn whole
       focusedRow: string | null
       seq: number
+      // The chord abovePrompt:focus is bound to; null when the person unbound it
+      focusKeys: string | null
     }
   }
 }

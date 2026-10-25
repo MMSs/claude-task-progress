@@ -11,9 +11,12 @@ const plan = atom({ plugin: 'task-progress', key: 'plan' } as const, null)
 const isSlashMenu = atom({ plugin: 'task-progress', key: 'isSlashMenu' } as const, false)
 const isCollapsed = atom({ plugin: 'task-progress', key: 'isCollapsed' } as const, false)
 const windowStart = atom({ plugin: 'task-progress', key: 'windowStart' } as const, null)
+const focusedRow = atom({ plugin: 'task-progress', key: 'focusedRow' } as const, null)
 const seq = atom({ plugin: 'task-progress', key: 'seq' } as const, 0)
 
 const MAX_ROWS = 5
+// Lines the focused row's DOING may wrap onto
+const MAX_DOING_LINES = 6
 const PLAN_POLL_MS = 3000
 const FINISHED: ReadonlySet<AgentStatus> = new Set(['completed', 'failed', 'killed'])
 const TASK_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'])
@@ -253,6 +256,21 @@ function truncate(text: string, width: number): string {
   return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`
 }
 
+// Lines of at most `width`, broken at a space where there is one; the last is cut
+function wrap(text: string, width: number, max: number): string[] {
+  if (width <= 0) return ['']
+  const lines: string[] = []
+  let rest = text
+  while (rest.length > width && lines.length < max - 1) {
+    const space = rest.lastIndexOf(' ', width)
+    const at = space > 0 ? space : width
+    lines.push(rest.slice(0, at))
+    rest = rest.slice(at).trimStart()
+  }
+  lines.push(truncate(rest, width))
+  return lines
+}
+
 async function readRows($: EngineInterface, isMainWorking: boolean, statuses = new Map<string, AgentStatus>()) {
   return buildRows(
     await read($, tasks),
@@ -348,7 +366,13 @@ const SLASH_DRAFT = /^\/\S*$/
 // Last value written, so a keystroke that changes nothing costs no state write
 let wasSlashMenu: boolean | undefined
 
+// Typing at the prompt means the ring has left the band (Esc raises no ui.focus)
+async function forgetFocus($: EngineInterface) {
+  if ((await read($, focusedRow)) !== null) await update($, focusedRow, () => null)
+}
+
 async function noteDraft($: EngineInterface, text: string) {
+  await forgetFocus($)
   const isOpen = SLASH_DRAFT.test(text)
   if (isOpen === wasSlashMenu) return
   wasSlashMenu = isOpen
@@ -383,6 +407,7 @@ export const register: Register = on => {
   // it were not there
   on('prompt.submit', async ($, e, next) => {
     await forgetFinished($)
+    await forgetFocus($)
     await update($, windowStart, () => null)
     await update($, activity, all => ({ ...all, '': '' }))
     await notePlanMentions($, [e.text])
@@ -485,13 +510,14 @@ export const register: Register = on => {
     return result
   }).catch(($, e, next) => next(e))
 
-  // Walking the list past the fifth row: slide the window so the next row is drawn
-  // before the ring reaches for it
+  // Walking the list: the row the ring lands on wraps its DOING, and past the fifth
+  // row the window slides so the next row is drawn before the ring reaches for it
   on('ui.focus', async ($, e, next) => {
     const result = await next(e)
-    if (e.component !== 'AbovePrompt' || e.plugin !== 'task-progress' || !e.element?.startsWith('row:')) {
-      return result
-    }
+    if (e.component !== 'AbovePrompt' || result.deny !== undefined) return result
+    const isRow = e.plugin === 'task-progress' && e.element?.startsWith('row:')
+    await update($, focusedRow, () => (isRow ? (e.element ?? null) : null))
+    if (!isRow) return result
     const rows = await readRows($, false)
     const index = rows.findIndex(row => `row:${row.key}` === e.element)
     if (index === -1 || rows.length <= MAX_ROWS) return result
@@ -601,6 +627,9 @@ export const register: Register = on => {
       const text = firstLine(row.activity ?? EMPTY)
       return place && overflows(row) && text.startsWith('Bash: ') ? shortenCd(text, place.cwd, place.home) : text
     }
+    // The focused row's DOING is drawn whole, as written, on lines under it in its own column
+    const focused = await read($, focusedRow)
+    const doingIndent = ' '.repeat(2 + taskColumn + agentColumn + 2 * GAP.length)
 
     const scrolled = `${hiddenAbove > 0 ? ` ↑${hiddenAbove}` : ''}${hiddenBelow > 0 ? ` ↓${hiddenBelow}` : ''}`
     const summary = `${NAME}${count}${scrolled}`
@@ -632,8 +661,12 @@ export const register: Register = on => {
           {shown.map(row => {
             const isDone = row.state === 'done'
             const isViewed = viewed !== '' && row.agent === viewed && !isDone
+            const [first, ...more] =
+              focused === `row:${row.key}`
+                ? wrap(firstLine(row.activity ?? EMPTY), doingColumn, MAX_DOING_LINES)
+                : [truncate(doing(row), doingColumn)]
 
-            return (
+            return [
               <Button key={`row:${row.key}`} plain onPress={() => open(row.agent)}>
                 <Text color={COLORS[row.state]}>{ICONS[row.state]}</Text>{' '}
                 <Text bold={row.state === 'active'} dimColor={isDone}>
@@ -644,9 +677,15 @@ export const register: Register = on => {
                   {cell(row.agentLabel ?? EMPTY, agentColumn)}
                 </Text>
                 {GAP}
-                <Text dimColor>{truncate(doing(row), doingColumn)}</Text>
-              </Button>
-            )
+                <Text dimColor>{first}</Text>
+              </Button>,
+              ...more.map((line, i) => (
+                <Text key={`more:${row.key}:${i}`} dimColor>
+                  {doingIndent}
+                  {line}
+                </Text>
+              )),
+            ]
           })}
           <Box flexDirection="row" justifyContent="space-between">
             <Text>

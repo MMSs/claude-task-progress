@@ -241,3 +241,45 @@ test('a command too wide for DOING has its cd into the session folder shortened'
     'Bash: cd /tmp/elsewhere && npm',
   )
 })
+
+test('the focused row wraps its DOING onto lines under it; the others stay one line', async ($, on) => {
+  const command = `cd /Users/me/dev/app && ${Array.from({ length: 12 }, (_, i) => `step-${i}`).join(' && ')}`
+  on('session.cwd', () => ({ value: '/Users/me/dev/app' }))
+  on('env.get', () => ({ value: '/Users/me' }))
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Research requests', type: 'general-purpose', status: 'running' as const }],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  on('ui.focus', () => ({}))
+  on('prompt.change', (_, e) => ({ text: e.text }))
+
+  await $.tool.call({ tool: 'Bash', command, agentId: 'a1' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const doingLines = async () => (await ui.findAll({ type: 'Text', text: /step-|Bash: / })).map(t => t.text.trim())
+
+  // Unfocused: one line, cut, its cd shortened
+  expect(await doingLines()).toEqual([expect.stringMatching(/^Bash: cd \.\/app && step-0 .*…$/)])
+
+  await $.ui.focus({
+    component: 'AbovePrompt',
+    requestId: BAND.requestId,
+    plugin: 'task-progress',
+    element: 'row:agent:a1',
+    origin: { kind: 'person' },
+  })
+  await ui.redraw()
+  const lines = await doingLines()
+  expect(lines.length).toBeGreaterThan(1)
+  expect(lines.join(' ')).toBe(`Bash: ${command}`)
+
+  // Typing at the prompt hands the keys back: one line again
+  await $.prompt.change({ text: 'x' })
+  await ui.redraw()
+  expect((await doingLines()).length).toBe(1)
+  await ui.unmount()
+})

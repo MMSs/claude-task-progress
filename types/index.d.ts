@@ -54,6 +54,8 @@ declare module 'claude-code' {
       isCollapsed: boolean
       // First row of the five shown while the person walks the list; null follows the active task
       windowStart: number | null
+      // The row the person has walked the band's focus ring onto, its DOING drawn whole
+      focusedRow: string | null
       seq: number
     }
   }

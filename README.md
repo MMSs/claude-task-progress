@@ -1,16 +1,17 @@
 # Task progress
 
-A [Claude Code](https://claude.com/claude-code) plugin that keeps a five-line
+A [Claude Code](https://claude.com/claude-code) plugin that keeps a five-row
 progress sheet above the prompt: every task the session is working through,
-which agent is on it, and what that agent is doing right now.
+which agent is on it, that agent's model, and what it is doing right now.
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│   TASK                          AGENT                 DOING                  │
-│ ✓ Fixtures                      —                     —                      │
-│ ● Add the export command        Implement             Edit export.ts         │
-│ ○ Docs page                     —                     —                      │
-│ Task progress · 1/3 tasks     ctrl+x tab select · enter open agent · h: hide │
+│   TASK                     AGENT              MODEL      DOING               │
+│ ✓ 1. Fixtures              Implement fixtur…  sonnet hi  —                   │
+│ ● 2. Add export command    Implement export…  sonnet hi  Edit export.ts      │
+│ ○ 3. Docs page             —                  —          —                   │
+│ ● Research API limits      Explore            haiku med  Read api.md         │
+│ Task progress · 1/3 tasks   ctrl+x tab select · tab/shift+tab move · h: hide │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -21,41 +22,59 @@ which agent is on it, and what that agent is doing right now.
   `- [ ]` steps and the `.superpowers/sdd/<plan>/progress.md` ledger. Subagents
   described "Implement Task N: …" or "Review Task N …" are placed on that task.
   The plan is picked up the first time a tool call or prompt mentions its path,
-  and re-read every three seconds.
+  and re-read every three seconds. When superpowers deletes the ledger at the
+  finish, the tasks it marked complete stay done.
 - **TodoWrite / TaskCreate / TaskUpdate** lists, from the main conversation or
   any subagent; a subagent's own tasks are indented under the task it was
   spawned for.
-- **Subagents tied to no task** get a row of their own.
+- **Subagents tied to no task** get a row of their own, named by their
+  description, with their agent type as AGENT.
 
-Each row shows a status (✓ done, ● in progress, ○ pending, ✗ failed), the
-task, the agent working on it (a done task keeps the one that did it), that
-agent's model and effort ("opus hi", "haiku med"), and its latest tool call
-("Edit export.ts", "Bash: run tests"). A task several agents are at shows
-each further one on a `└` line under it, with its own AGENT and DOING.
-Rows are cut to fit;
-a command too wide for its column has a `cd` into the session's folder
-shortened to `cd ./<folder>` first. The row the focus is on (`tab` /
-`shift+tab`) shows its DOING whole and as written, wrapped onto lines under it.
-The sheet steps aside while the `/` command menu is open, and goes away once
-every task is done and every agent has finished. Short of that, the next
-prompt clears what is finished: a plan whose every task is done, with the
-agents that worked on it, and each finished agent tied to no task, so the
-next plan starts on a clean sheet. The `x/y tasks` count is
-shown only when there are tasks.
+## The rows
+
+| Column | Shows |
+| --- | --- |
+| status | ✓ done, ● in progress, ○ pending, ✗ failed |
+| TASK | The task: a plan task as `N. title` |
+| AGENT | The agent working on it, `main` for the main conversation. A done task keeps the agent that did it |
+| MODEL | That agent's model and effort: `opus hi`, `sonnet xhi`, `haiku med` |
+| DOING | Its latest tool call: `Edit export.ts`, `Bash: run tests` |
+
+- A task several agents are at gets a `└` line under it for each further
+  agent, with its own AGENT, MODEL and DOING.
+- Columns are sized from every row, so scrolling never moves them. MODEL is as
+  wide as its widest value; the rest is shared by TASK, AGENT and DOING, and a
+  cell too long for its column is cut with `…`. A command too wide for DOING has
+  a `cd` into the session's folder shortened to `cd ./<folder>` first.
+- Only five rows show at once; the footer counts the ones above and below
+  (`↑9 ↓2`). The `x/y tasks` count is shown only when there are tasks.
+- The row the focus is on is highlighted, and its DOING is drawn whole and as
+  written, wrapped onto up to six lines under it.
+
+## When it clears
+
+- The sheet steps aside while the `/` command menu is open.
+- Once every task is done and every agent has finished, it goes away, and the
+  next prompt clears it.
+- Short of that, the next prompt clears what is finished: a plan whose every
+  task is done, with the agents that worked on it, and each finished agent tied
+  to no task. A new plan starts on a clean sheet even while other work runs.
 
 ## Keys
 
 | Key | What it does |
 | --- | --- |
 | `ctrl+x tab` | Focus the sheet (Claude Code's `abovePrompt:focus`) |
-| `tab` / `shift+tab` | Move between rows; the five-row window scrolls |
-| `enter` | Open the transcript of the agent working on that task |
+| `tab` / `shift+tab` | Move between rows; the five-row window scrolls with the focus |
+| `enter` | Open the transcript of the row's agent: the one at work, or the one that did a done task |
 | `esc` | Back to the prompt |
 | `h` | Fold the sheet to one line; `enter` on that line unfolds it |
 
-To focus it with another key, bind `abovePrompt:focus` in
-`~/.claude/keybindings.json`; the sheet's hint shows the key you bound. For
-example, `ctrl+up` in place of `ctrl+x tab`:
+### Another key to focus it
+
+Bind `abovePrompt:focus` in `~/.claude/keybindings.json`; the sheet's hint
+shows the key you bound, and follows the file as you edit it. For example,
+`ctrl+up` in place of `ctrl+x tab`:
 
 ```json
 { "bindings": [{ "context": "Chat", "bindings": { "ctrl+x tab": null, "ctrl+up": "abovePrompt:focus" } }] }
@@ -94,6 +113,12 @@ Update with `/plugin update task-progress`, remove with
 - A plan is found only once its path shows up in a tool call or prompt, so
   right after a reload the sheet stays empty until the next mention.
 - Plans in other layouts than superpowers' are not recognised.
+- MODEL fills in at an agent's next model request after the plugin loads; an
+  agent that finished before then shows `—`.
+- Claude Code does not tell plugins when `esc` leaves the sheet, so the last
+  focused row stays expanded until you type at the prompt.
+- An agent that starts or finishes while the plugin is reloading can be missed
+  and stay shown as running.
 - Claude Code's own `ctrl+x ctrl+a` folds the band to a line labelled
   "plugin panel"; use `h` instead to keep the name.
 

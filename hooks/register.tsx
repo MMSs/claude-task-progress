@@ -96,6 +96,21 @@ function describeCall(tool: string, input: Record<string, unknown>): string {
   }
 }
 
+// `cd` with an absolute or ~ path, after a space or a shell separator
+const CD = /(^|[\s;&|(])cd\s+("[^"]*"|'[^']*'|[/~][^\s;&|)]*)/g
+
+// A `cd` into the session's folder or below it, named from that folder:
+// "cd /Users/me/dev/app/src && npm test" → "cd ./app/src && npm test"
+function shortenCd(text: string, cwd: string, home: string | undefined): string {
+  const root = cwd.replace(/\/+$/, '')
+  if (!root) return text
+  return text.replace(CD, (match, lead: string, arg: string) => {
+    const path = resolvePath(arg.replace(/^(["'])(.*)\1$/, '$2'), cwd, home)
+    if (path !== root && !path.startsWith(`${root}/`)) return match
+    return `${lead}cd ./${basename(root)}${path.slice(root.length)}`
+  })
+}
+
 // The task a loop has in progress, where a subagent it spawns now gets hung
 function activeTask(all: Record<string, Task>, agent: string): string | undefined {
   return Object.entries(all)
@@ -571,6 +586,22 @@ export const register: Register = on => {
     const doingColumn = room - taskColumn - agentColumn
     const cell = (text: string, width: number) => truncate(text, width).padEnd(width)
 
+    // A command too wide for DOING has its `cd` into the session's folder shortened;
+    // one that fits is shown as written
+    const overflows = (row: Row) => firstLine(row.activity ?? EMPTY).length > doingColumn
+    let place: { cwd: string; home: string | undefined } | undefined
+    if (shown.some(row => overflows(row) && row.activity?.startsWith('Bash: '))) {
+      try {
+        place = { cwd: await $.session.cwd(), home: await $.env.get('HOME') }
+      } catch {
+        place = undefined
+      }
+    }
+    const doing = (row: Row) => {
+      const text = firstLine(row.activity ?? EMPTY)
+      return place && overflows(row) && text.startsWith('Bash: ') ? shortenCd(text, place.cwd, place.home) : text
+    }
+
     const scrolled = `${hiddenAbove > 0 ? ` ↑${hiddenAbove}` : ''}${hiddenBelow > 0 ? ` ↓${hiddenBelow}` : ''}`
     const summary = `${NAME}${count}${scrolled}`
     let hintRoom = inner - summary.length - 2 - HIDE_WIDTH
@@ -613,7 +644,7 @@ export const register: Register = on => {
                   {cell(row.agentLabel ?? EMPTY, agentColumn)}
                 </Text>
                 {GAP}
-                <Text dimColor>{truncate(firstLine(row.activity ?? EMPTY), doingColumn)}</Text>
+                <Text dimColor>{truncate(doing(row), doingColumn)}</Text>
               </Button>
             )
           })}

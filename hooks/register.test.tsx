@@ -207,3 +207,37 @@ test('its own hide folds it to one named line, and Enter there unfolds it', asyn
   expect(await rowCount()).toBe(5)
   await ui.unmount()
 })
+
+test('a command too wide for DOING has its cd into the session folder shortened', async ($, on) => {
+  on('session.cwd', () => ({ value: '/Users/me/dev/app' }))
+  on('env.get', () => ({ value: '/Users/me' }))
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Research requests', type: 'general-purpose', status: 'running' as const }],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  const doing = async (command: string) => {
+    await $.tool.call({ tool: 'Bash', command, agentId: 'a1' })
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ type: 'Text', text: /^Bash: / }))?.text
+    await ui.unmount()
+    return text
+  }
+
+  // Too wide: the folder is named, what follows kept
+  expect(await doing('cd /Users/me/dev/app/hooks && npm test -- --reporter=verbose --watch=false')).toBe(
+    'Bash: cd ./app/hooks && npm test -- --reporter=verbose --watch=false',
+  )
+  expect(await doing('cd ~/dev/app && git log --oneline --graph --decorate --all --max-count=40 -- hooks')).toContain(
+    'Bash: cd ./app && git log',
+  )
+  // Fits: shown as written
+  expect(await doing('cd /Users/me/dev/app')).toBe('Bash: cd /Users/me/dev/app')
+  // Outside the session folder: left alone
+  expect(await doing('cd /tmp/elsewhere && npm test -- --reporter=verbose --runInBand --watch=false --coverage')).toContain(
+    'Bash: cd /tmp/elsewhere && npm',
+  )
+})

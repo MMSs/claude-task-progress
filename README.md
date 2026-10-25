@@ -28,7 +28,8 @@ which agent is on it, and what that agent is doing right now.
 - **Subagents tied to no task** get a row of their own.
 
 Each row shows a status (✓ done, ● in progress, ○ pending, ✗ failed), the
-task, the agent working on it, and that agent's latest tool call
+task, the agent working on it (a done task keeps the one that did it), that
+agent's model and effort ("opus hi", "haiku med"), and its latest tool call
 ("Edit export.ts", "Bash: run tests"). A task several agents are at shows
 each further one on a `└` line under it, with its own AGENT and DOING.
 Rows are cut to fit;

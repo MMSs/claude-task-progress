@@ -406,3 +406,79 @@ test('walking the rows draws the next one, whatever an agent left stale', async 
   }
   await ui.unmount()
 })
+
+test('a done task keeps the agent that worked on it, and Enter on it opens that agent', async ($, on) => {
+  let status: 'running' | 'completed' = 'running'
+  const views: (string | undefined)[] = []
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Build lexer', type: 'implementer', status }],
+  }))
+  on('ui.view', (_, e) => {
+    views.push(e.agentId)
+    return { value: {} }
+  })
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  const todos = TODOS.slice(0, 4)
+  await $.tool.call({ tool: 'TodoWrite', todos })
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/lexer.ts', old_string: 'a', new_string: 'b', agentId: 'a1' })
+  // a1 finishes; Build parser is marked done and the next todo started
+  status = 'completed'
+  await $.tool.call({
+    tool: 'TodoWrite',
+    todos: todos.map((t, i) => ({ ...t, status: i <= 1 ? ('completed' as const) : i === 2 ? ('in_progress' as const) : ('pending' as const) })),
+  })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const row = async (key: string) => (await ui.find({ type: 'Button', key }))?.text ?? ''
+  expect(await row('row:todo::1')).toContain('Build lexer')
+  // A done task nobody was spawned for was the main conversation's
+  expect(await row('row:todo::0')).toContain('main')
+  // Its DOING is cleared: the agent is done
+  expect(await row('row:todo::1')).not.toContain('Edit lexer.ts')
+
+  await ui.press({ key: 'row:todo::1' })
+  expect(views).toEqual(['a1'])
+  await ui.unmount()
+})
+
+test('a MODEL column after AGENT names each agent\'s model and effort, shortened', async ($, on) => {
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Build lexer', type: 'implementer', status: 'running' as const }],
+  }))
+  on('turn.step', async function* (_, e) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
+  })
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  const step = async (model: string, effort: 'medium' | 'high' | undefined, agentId?: string) => {
+    for await (const _ of $.turn.step({ turnId: 't', index: 0, model, effort, messageCount: 1, ...(agentId && { agentId }) })) {
+      // drained
+    }
+  }
+
+  await step('claude-opus-5-5', 'high')
+  await $.tool.call({ tool: 'TodoWrite', todos: TODOS })
+  await step('claude-haiku-5-5', 'medium', 'a1')
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/lexer.ts', old_string: 'a', new_string: 'b', agentId: 'a1' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const header = (await ui.find({ type: 'Text', text: /TASK/ }))?.text ?? ''
+  expect(header.indexOf('AGENT')).toBeLessThan(header.indexOf('MODEL'))
+  expect(header.indexOf('MODEL')).toBeLessThan(header.indexOf('DOING'))
+  const row = async (key: string) => (await ui.find({ type: 'Button', key }))?.text ?? ''
+  expect(await row('row:todo::1')).toMatch(/Build lexer\s+haiku med\s+Edit lexer\.ts/)
+  expect(await row('row:todo::0')).toMatch(/main\s+opus hi\s/)
+  // Nobody at it yet: no model
+  expect(await row('row:todo::2')).toMatch(/—\s+—\s+—/)
+  // As small as it goes: the column is its widest value
+  expect(header).toMatch(/MODEL {6}DOING/)
+  await ui.unmount()
+})

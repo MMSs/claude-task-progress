@@ -7,6 +7,7 @@ import { ledgerPathFor, parsePlan, planPathsIn, resolvePath, taskNumberOf } from
 const tasks = atom({ plugin: 'task-progress', key: 'tasks' } as const, {})
 const agents = atom({ plugin: 'task-progress', key: 'agents' } as const, {})
 const activity = atom({ plugin: 'task-progress', key: 'activity' } as const, {})
+const models = atom({ plugin: 'task-progress', key: 'models' } as const, {})
 const plan = atom({ plugin: 'task-progress', key: 'plan' } as const, null)
 const isSlashMenu = atom({ plugin: 'task-progress', key: 'isSlashMenu' } as const, false)
 const isCollapsed = atom({ plugin: 'task-progress', key: 'isCollapsed' } as const, false)
@@ -36,10 +37,12 @@ const HIDE_WIDTH = ' · h: hide'.length
 const GAP = '  '
 // What an empty cell shows
 const EMPTY = '—'
+// Effort levels as the MODEL column spells them
+const EFFORTS: Record<string, string> = { low: 'lo', medium: 'med', high: 'hi', xhigh: 'xhi', max: 'max' }
 
 type RowState = 'done' | 'active' | 'pending' | 'failed'
 
-// One task, or one agent tied to no task: the TASK, AGENT and DOING columns
+// One task, or one agent tied to no task: the TASK, AGENT, MODEL and DOING columns
 type Row = {
   key: string
   depth: number
@@ -47,8 +50,10 @@ type Row = {
   label: string
   // The loop Enter opens: '' for the main conversation
   agent: string
-  // Who is at it now; absent while nobody is
+  // Who is at it now, or did it once it is done; absent while nobody is
   agentLabel?: string
+  // That agent's model and effort: "opus hi"
+  model?: string
   activity?: string
   // A second (third, ...) agent at the task of the row above, not a task itself
   isAgentLine?: true
@@ -99,6 +104,13 @@ function describeCall(tool: string, input: Record<string, unknown>): string {
     default:
       return name
   }
+}
+
+// A model and effort as the MODEL column shows them: "claude-opus-5-5", high → "opus hi"
+function shortModel(model: string, effort: string | number | undefined): string {
+  const name = model.match(/opus|sonnet|haiku|fable/i)?.[0].toLowerCase() ?? model.replace(/^claude-/, '').split(/[-[]/)[0]
+  const level = typeof effort === 'number' ? `${Math.round(effort / 1000)}k` : effort && (EFFORTS[effort] ?? effort)
+  return level ? `${name} ${level}` : (name ?? model)
 }
 
 // `cd` with an absolute or ~ path, after a space or a shell separator
@@ -170,6 +182,7 @@ function buildRows(
   currentPlan: Plan | null,
   allAgents: Record<string, AgentNode>,
   allActivity: Record<string, string>,
+  allModels: Record<string, string>,
   statuses: ReadonlyMap<string, AgentStatus>,
   isMainWorking: boolean,
 ): Row[] {
@@ -203,13 +216,16 @@ function buildRows(
       const [first, ...others] = children.filter(([id]) => isRunning(id))
       // The first agent still at the task, else the loop that owns it while that runs
       const worker = first?.[0] ?? (state === 'active' && isRunning(loop) ? loop : undefined)
+      // A done task keeps who did it: the first agent spawned for it, else its loop
+      const doer = state === 'done' ? (children[0]?.[0] ?? loop) : worker
       rows.push({
         key,
         depth,
         state,
         label: task.label,
-        agent: worker ?? loop,
-        agentLabel: worker === undefined ? undefined : worker === '' ? 'main' : agentName(worker),
+        agent: doer ?? loop,
+        agentLabel: doer === undefined ? undefined : doer === '' ? 'main' : agentName(doer),
+        model: doer === undefined ? undefined : allModels[doer],
         activity: state === 'active' ? (worker !== undefined && allActivity[worker]) || task.activeForm : undefined,
       })
       // Every other agent at it gets a line of its own under the task
@@ -221,6 +237,7 @@ function buildRows(
           label: '',
           agent: id,
           agentLabel: agentName(id),
+          model: allModels[id],
           activity: allActivity[id],
           isAgentLine: true,
         })
@@ -243,7 +260,8 @@ function buildRows(
       state: status === 'failed' || status === 'killed' ? 'failed' : isDone ? 'done' : 'active',
       label: node.label,
       agent: id,
-      agentLabel: isDone ? undefined : (node.kind ?? 'agent'),
+      agentLabel: node.kind ?? 'agent',
+      model: allModels[id],
       activity: isDone ? undefined : allActivity[id],
     })
     if (hasTasks(id)) emitLoop(id, 1)
@@ -294,6 +312,7 @@ async function readRows($: EngineInterface, isMainWorking: boolean) {
     await read($, plan),
     await read($, agents),
     await read($, activity),
+    await read($, models),
     statuses,
     isMainWorking,
   )
@@ -545,6 +564,16 @@ export const register: Register = on => {
     return result
   }).catch(($, e, next) => next(e))
 
+  // Each loop's model and effort, as its latest request named them
+  on('turn.step', async function* ($, e, next) {
+    const loop = e.agentId ?? ''
+    const text = shortModel(e.model, e.effort)
+    if ((await read($, models))[loop] !== text) await update($, models, all => ({ ...all, [loop]: text }))
+    return yield* next(e)
+  }).catch(async function* ($, e, next) {
+    return yield* next(e)
+  })
+
   // Walking the list: the row the ring lands on wraps its DOING, and past the fifth
   // row the window slides so the next row is drawn before the ring reaches for it
   on('ui.focus', async ($, e, next) => {
@@ -620,13 +649,14 @@ export const register: Register = on => {
     const inner = e.props.bodyColumns - 4
     const viewed = e.props.view.agentId ?? ''
 
-    // TASK, AGENT and DOING columns after the status glyph, two spaces apart, sized
-    // from every row (not just the five shown, so scrolling never moves them): TASK
-    // up to 45% and AGENT up to 25% of the room, DOING the rest; room DOING
-    // does not use goes back to the first two. Every cell is cut to its width, so
-    // a row never wraps.
-    const room = inner - 2 - 2 * GAP.length
+    // TASK, AGENT, MODEL and DOING columns after the status glyph, two spaces apart,
+    // sized from every row (not just the five shown, so scrolling never moves them):
+    // MODEL its widest value, TASK up to 45% and AGENT up to 25% of the room left,
+    // DOING the rest; room DOING does not use goes back to TASK and AGENT. Every
+    // cell is cut to its width, so a row never wraps.
     const natural = (texts: string[], title: string) => Math.max(title.length, ...texts.map(t => t.length))
+    const modelColumn = natural(rows.map(row => row.model ?? EMPTY), 'MODEL')
+    const room = inner - 2 - 3 * GAP.length - modelColumn
     const taskWant = natural(rows.map(row => '  '.repeat(row.depth) + row.label), 'TASK')
     const agentWant = natural(rows.map(row => row.agentLabel ?? EMPTY), 'AGENT')
     const doingWant = natural(rows.map(row => firstLine(row.activity ?? EMPTY)), 'DOING')
@@ -659,7 +689,7 @@ export const register: Register = on => {
     }
     // The focused row's DOING is drawn whole, as written, on lines under it in its own column
     const focused = await read($, focusedRow)
-    const doingIndent = ' '.repeat(2 + taskColumn + agentColumn + 2 * GAP.length)
+    const doingIndent = ' '.repeat(2 + taskColumn + agentColumn + modelColumn + 3 * GAP.length)
 
     const scrolled = `${hiddenAbove > 0 ? ` ↑${hiddenAbove}` : ''}${hiddenBelow > 0 ? ` ↓${hiddenBelow}` : ''}`
     const summary = `${NAME}${count}${scrolled}`
@@ -685,6 +715,8 @@ export const register: Register = on => {
             {cell('TASK', taskColumn)}
             {GAP}
             {cell('AGENT', agentColumn)}
+            {GAP}
+            {cell('MODEL', modelColumn)}
             {GAP}
             DOING
           </Text>
@@ -715,9 +747,11 @@ export const register: Register = on => {
                   </Text>
                 )}
                 {GAP}
-                <Text dimColor={isDim(!row.agentLabel)} underline={isViewed}>
+                <Text dimColor={isDim(!row.agentLabel || isDone)} underline={isViewed}>
                   {cell(row.agentLabel ?? EMPTY, agentColumn)}
                 </Text>
+                {GAP}
+                <Text dimColor={isDim(true)}>{cell(row.model ?? EMPTY, modelColumn)}</Text>
                 {GAP}
                 <Text dimColor={isDim(true)}>{first}</Text>
               </Button>,

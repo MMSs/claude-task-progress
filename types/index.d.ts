@@ -46,6 +46,8 @@ declare module 'claude-code' {
       agents: Record<string, AgentNode>
       // What each loop last did, keyed like Task.agent
       activity: Record<string, string>
+      // Each loop's model and effort as the MODEL column shows them, keyed like Task.agent
+      models: Record<string, string>
       // The markdown plan the session is executing, found in what its tools touch
       plan: Plan | null
       // The prompt holds a slash command still being named, so its menu is open

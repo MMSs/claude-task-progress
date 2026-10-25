@@ -359,13 +359,15 @@ export const register: Register = on => {
     return result
   })
 
+  // These hooks only watch, never refuse: when one fails, the action goes on as if
+  // it were not there
   on('prompt.submit', async ($, e, next) => {
     await forgetFinished($)
     await update($, windowStart, () => null)
     await update($, activity, all => ({ ...all, '': '' }))
     await notePlanMentions($, [e.text])
     return next(e)
-  })
+  }).catch(($, e, next) => next(e))
 
   on('agent.spawn', async ($, e, next) => {
     await notePlanMentions($, [e.prompt])
@@ -381,7 +383,7 @@ export const register: Register = on => {
       }))
     }
     return result
-  })
+  }).catch(($, e, next) => next(e))
 
   on('classic.SubagentStop', async ($, e, next) => {
     await update($, agents, all => {
@@ -389,7 +391,7 @@ export const register: Register = on => {
       return node ? { ...all, [e.agent_id]: { ...node, isDone: true } } : all
     })
     return next(e)
-  })
+  }).catch(($, e, next) => next(e))
 
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
@@ -461,7 +463,7 @@ export const register: Register = on => {
       if (e.status) await update($, windowStart, () => null)
     }
     return result
-  })
+  }).catch(($, e, next) => next(e))
 
   // Walking the list past the fifth row: slide the window so the next row is drawn
   // before the ring reaches for it
@@ -481,7 +483,7 @@ export const register: Register = on => {
     start = clampStart(start, rows.length)
     if (start !== current) await update($, windowStart, () => start)
     return result
-  })
+  }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)

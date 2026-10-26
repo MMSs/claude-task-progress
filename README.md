@@ -28,7 +28,8 @@ which agent is on it, that agent's model, and what it is doing right now.
   any subagent; a subagent's own tasks are indented under the task it was
   spawned for.
 - **Subagents tied to no task** get a row of their own, named by their
-  description, with their agent type as AGENT.
+  description, with their agent type as AGENT. Loops Claude Code runs on its
+  own, which no Agent call started and its agent list leaves out, get no row.
 
 ## The rows
 
@@ -117,8 +118,6 @@ Update with `/plugin update task-progress`, remove with
   agent that finished before then shows `—`.
 - Claude Code does not tell plugins when `esc` leaves the sheet, so the last
   focused row stays expanded until you type at the prompt.
-- An agent that starts or finishes while the plugin is reloading can be missed
-  and stay shown as running.
 - Claude Code's own `ctrl+x ctrl+a` folds the band to a line labelled
   "plugin panel"; use `h` instead to keep the name.
 

@@ -189,10 +189,13 @@ function buildRows(
   statuses: ReadonlyMap<string, AgentStatus>,
   isMainWorking: boolean,
 ): Row[] {
+  // The engine lists an agent until a while after it ends, so one it no longer lists
+  // has ended, heard or not; only a workflow's agents it never lists
   const isRunning = (agent: string) => {
     if (agent === '') return isMainWorking
     const status = statuses.get(agent)
-    return status ? !FINISHED.has(status) : !allAgents[agent]?.isDone
+    const node = allAgents[agent]
+    return status ? !FINISHED.has(status) : Boolean(node?.isUnlisted && !node.isDone)
   }
 
   const allTasks = { ...planTasks(currentPlan, allAgents, isRunning), ...toolTasks }
@@ -256,7 +259,7 @@ function buildRows(
     if (seen.has(id)) return
     seen.add(id)
     const status = statuses.get(id)
-    const isDone = node.isDone || (status !== undefined && FINISHED.has(status))
+    const isDone = !isRunning(id)
     rows.push({
       key: `agent:${id}`,
       depth: 0,
@@ -472,17 +475,21 @@ async function refreshFocusKeys($: EngineInterface) {
   if ((await read($, focusKeys)) !== found) await update($, focusKeys, () => found)
 }
 
-// A subagent seen before its spawn was (one started before this mod loaded)
-async function ensureAgent($: EngineInterface, id: string) {
-  if ((await read($, agents))[id]) return
+// A subagent seen before its spawn was (one started before this mod loaded). A loop
+// the engine runs on its own is neither spawned nor listed, and may raise no end:
+// it is no agent of the session's, and gets no row.
+async function ensureAgent($: EngineInterface, id: string): Promise<boolean> {
+  if ((await read($, agents))[id]) return true
   const info = (await $.agent.list()).find(a => a.id === id)
-  const parent = info?.parentId ?? ''
-  const label = info?.description ?? info?.name ?? 'agent'
+  if (!info) return false
+  const parent = info.parentId ?? ''
+  const label = info.description || info.name || info.type
   const parentTask = parentTaskFor(label, await read($, tasks), parent)
   const n = await nextSeq($)
   await update($, agents, all =>
-    all[id] ? all : { ...all, [id]: { label, kind: info?.type, parent, parentTask, isDone: false, seq: n } },
+    all[id] ? all : { ...all, [id]: { label, kind: info.type, parent, parentTask, isDone: false, seq: n } },
   )
+  return true
 }
 
 function textsOf(input: Record<string, unknown>): string[] {
@@ -556,7 +563,15 @@ export const register: Register = on => {
       const n = await nextSeq($)
       await update($, agents, all => ({
         ...all,
-        [id]: { label: e.description, kind: e.subagentType, parent, parentTask, isDone: false, seq: all[id]?.seq ?? n },
+        [id]: {
+          label: e.description,
+          kind: e.subagentType,
+          parent,
+          parentTask,
+          isDone: false,
+          isUnlisted: e.workflow !== undefined || undefined,
+          seq: all[id]?.seq ?? n,
+        },
       }))
     }
     return result
@@ -575,7 +590,7 @@ export const register: Register = on => {
     const agent = e.agentId ?? ''
     const input = e as unknown as Record<string, unknown>
 
-    if (agent) await ensureAgent($, agent)
+    if (agent && !(await ensureAgent($, agent))) return next(e)
     if (!TASK_TOOLS.has(tool)) {
       const text = describeCall(tool, input)
       await update($, activity, all => ({ ...all, [agent]: text }))

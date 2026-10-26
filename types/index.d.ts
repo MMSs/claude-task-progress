@@ -19,6 +19,8 @@ export type AgentNode = {
   parent: string
   parentTask?: string
   isDone: boolean
+  // A workflow's agent, which the engine's agent list leaves out
+  isUnlisted?: boolean
   seq: number
 }
 

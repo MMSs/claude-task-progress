@@ -589,3 +589,47 @@ test('the hint names the chord the person bound to focus the band', async ($, on
   expect(await hint()).toContain('ctrl+up select')
   expect(await hint()).not.toContain('ctrl+x tab')
 })
+
+test('a loop the engine runs on its own, never spawned nor listed, gets no row', async ($, on) => {
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: [{ id: 'a1', description: 'Research requests', type: 'Explore', status: 'running' as const }],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  await $.tool.call({ tool: 'Read', file_path: '/repo/src/api.ts', agentId: 'a1' })
+  // Loops of the engine's own, which it neither spawned through agent.spawn nor lists
+  await $.tool.call({ tool: 'Read', file_path: '/repo/implementer-instructions.md', agentId: 'x1' })
+  await $.tool.call({ tool: 'Bash', command: 'swift build', description: 'Rebuild', agentId: 'x2' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const buttons = (await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('row:'))
+  expect(buttons.map(b => b.key)).toEqual(['row:agent:a1'])
+  await ui.unmount()
+})
+
+test('an agent the engine no longer lists has finished, though no SubagentStop was heard', async ($, on) => {
+  let listed = true
+  on('tool.call', () => ({ result: {} }))
+  on('agent.list', () => ({
+    value: listed ? [{ id: 'a1', description: 'Review the fix', type: 'code-reviewer', status: 'running' as const }] : [],
+  }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+  await $.tool.call({ tool: 'Read', file_path: '/repo/src/api.ts', agentId: 'a1' })
+  const rowCount = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: false } })
+    const count = (await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('row:')).length
+    await ui.unmount()
+    return count
+  }
+  expect(await rowCount()).toBe(1)
+  // The engine drops a finished subagent's entry a while after it ends
+  listed = false
+  expect(await rowCount()).toBe(0)
+})
